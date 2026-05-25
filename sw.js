@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gymapp-v1';
+const CACHE_NAME = 'gymapp-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -6,7 +6,8 @@ const ASSETS = [
   './css/styles.css',
   './js/app.js',
   './js/workouts.js',
-  './js/storage.js'
+  './js/storage.js',
+  './js/sheets.js'
 ];
 
 self.addEventListener('install', (e) => {
