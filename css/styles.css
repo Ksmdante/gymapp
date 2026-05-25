@@ -115,6 +115,9 @@ h1, h2, h3, .stat-num, .target-value, .rest-countdown, .complete-stat-num, .stat
   background: var(--accent); color: #0c0c0e; font-size: 0.7rem; font-weight: 600;
   padding: 3px 8px; border-radius: 4px;
 }
+.badge-today {
+  background: var(--info); color: #ffffff;
+}
 
 .last-session-card {
   background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm);

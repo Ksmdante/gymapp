@@ -1,5 +1,10 @@
 import { sessions } from './workouts.js';
 import * as store from './storage.js';
+import * as sheets from './sheets.js';
+
+// Mutable copy of sessions — replaced/augmented on startup if a Sheet
+// workout is fetched successfully. Always falls back to the hardcoded list.
+let liveSessions = sessions.map((s) => ({ ...s }));
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js');
@@ -141,10 +146,13 @@ function renderHome() {
         <div class="stat-pill"><span class="stat-num">${daysSinceLast !== null ? daysSinceLast : '-'}</span> days rest</div>
       </div>
       <div class="session-cards">
-        ${sessions.map((s) => {
+        ${liveSessions.map((s) => {
           const past = store.getSessionsForType(s.id);
           const lastTrained = past.length ? new Date(past[past.length - 1].date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : null;
           const exCount = s.exercises.length;
+          let badge = '';
+          if (s.fromSheet) badge = '<span class="badge badge-today">Today</span>';
+          else if (!lastTrained) badge = '<span class="badge">New</span>';
           return `
           <button class="session-card" data-session="${s.id}">
             <div class="session-card-top">
@@ -152,7 +160,7 @@ function renderHome() {
                 <h2 class="session-card-name">${s.name}</h2>
                 <p class="session-card-sub">${s.subtitle}</p>
               </div>
-              ${!lastTrained ? '<span class="badge">New</span>' : ''}
+              ${badge}
             </div>
             <div class="session-card-meta">
               <span>${s.day}</span>
@@ -172,7 +180,7 @@ function renderHome() {
 
   app.querySelectorAll('.session-card').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const s = sessions.find((x) => x.id === btn.dataset.session);
+      const s = liveSessions.find((x) => x.id === btn.dataset.session);
       beginSession(s);
     });
   });
@@ -600,6 +608,15 @@ function completeSession() {
   };
   store.saveSession(session);
 
+  // Push to Google Sheet (fire-and-forget — never blocks UI)
+  sheets.saveSession(session);
+  for (const ex of sessionLog) {
+    if (!ex.skipped && ex.allHitMax) {
+      const newWeight = (ex.weight || 0) + ex.progressionKg;
+      sheets.saveWeight(ex.id, newWeight);
+    }
+  }
+
   app.innerHTML = `
     <div class="screen fadeUp complete-screen">
       <div class="complete-icon">
@@ -627,4 +644,37 @@ function completeSession() {
   document.getElementById('done-btn').addEventListener('click', () => go('home'));
 }
 
+// Startup: render immediately with local data, then sync with the Sheet
+// in the background. If anything comes back, re-render the home screen
+// so the "Today" workout / synced weights appear.
 render();
+
+(async () => {
+  if (!sheets.isConfigured()) return;
+
+  const [todaysWorkout, remoteWeights] = await Promise.all([
+    sheets.fetchTodaysWorkout(),
+    sheets.fetchWeights()
+  ]);
+
+  let needsRerender = false;
+
+  if (remoteWeights && typeof remoteWeights === 'object') {
+    for (const [id, w] of Object.entries(remoteWeights)) {
+      if (typeof w === 'number' && !isNaN(w)) {
+        store.setWeight(id, w);
+      }
+    }
+    needsRerender = true;
+  }
+
+  if (todaysWorkout && todaysWorkout.id && Array.isArray(todaysWorkout.exercises)) {
+    const idx = liveSessions.findIndex((s) => s.id === todaysWorkout.id);
+    const tagged = { ...todaysWorkout, fromSheet: true };
+    if (idx >= 0) liveSessions[idx] = tagged;
+    else liveSessions.unshift(tagged);
+    needsRerender = true;
+  }
+
+  if (needsRerender && state.screen === 'home') render();
+})();
