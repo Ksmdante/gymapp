@@ -229,6 +229,13 @@ function paintStats(history) {
   const allExercises = sessions.flatMap((s) => [...s.exercises, ...(s.finisher ? s.finisher.exercises : [])]);
   const exerciseMeta = {};
   for (const ex of allExercises) exerciseMeta[ex.id] = ex;
+  // Also pull names from history so new IDs invented by the Sheet workout
+  // get a friendly label in the progression dropdown / PR rows.
+  for (const s of history) {
+    for (const ex of s.exercises) {
+      if (!exerciseMeta[ex.id]) exerciseMeta[ex.id] = { id: ex.id, name: ex.name };
+    }
+  }
 
   // Top-line stats
   const total = history.length;
