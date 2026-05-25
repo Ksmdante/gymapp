@@ -77,6 +77,10 @@ export async function clearAll() {
   return await post({ action: 'clearAll' });
 }
 
+export async function saveWorkout(sessionJson) {
+  return await post({ action: 'saveWorkout', data: JSON.stringify(sessionJson) });
+}
+
 export function isConfigured() {
   return !!SHEETS_URL;
 }

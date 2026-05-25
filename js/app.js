@@ -24,6 +24,8 @@ let restRemaining = 0;
 let restDuration = 0;
 let restAdvanceAfter = false;
 
+let pendingWorkout = null;
+
 function render() {
   switch (state.screen) {
     case 'home': renderHome(); break;
@@ -33,8 +35,44 @@ function render() {
     case 'exercise': renderExercise(); break;
     case 'rest': renderRest(); break;
     case 'complete': renderComplete(); break;
+    case 'preview': renderPreview(); break;
   }
 }
+
+// One-time style injection for Load Workout flow
+(function injectLoadWorkoutStyles() {
+  if (document.getElementById('lw-styles')) return;
+  const s = document.createElement('style');
+  s.id = 'lw-styles';
+  s.textContent = `
+    .lw-home-btn { margin-top: 8px; }
+    .lw-textarea {
+      width: 100%; min-height: 180px; padding: 12px;
+      background: var(--bg3); color: var(--text); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); font-family: 'DM Sans', monospace; font-size: 0.78rem;
+      resize: vertical; line-height: 1.4; margin-bottom: 8px;
+    }
+    .lw-textarea:focus { outline: none; border-color: var(--accent); }
+    .lw-error {
+      color: var(--danger); font-size: 0.78rem; padding: 8px 12px; margin-bottom: 12px;
+      background: rgba(240, 74, 74, 0.08); border: 1px solid var(--danger); border-radius: var(--radius-sm);
+      display: none;
+    }
+    .lw-error.visible { display: block; }
+    .preview-header { margin-bottom: 12px; }
+    .preview-name { font-size: 1.4rem; font-weight: 700; }
+    .preview-sub { font-size: 0.85rem; color: var(--text2); margin-top: 2px; }
+    .preview-warmup { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 16px; }
+    .preview-warmup summary { font-size: 0.85rem; font-weight: 500; cursor: pointer; color: var(--text); list-style: none; display: flex; justify-content: space-between; align-items: center; }
+    .preview-warmup summary::-webkit-details-marker { display: none; }
+    .preview-warmup summary::after { content: '›'; color: var(--text3); font-size: 1.2rem; transition: transform 0.2s; }
+    .preview-warmup[open] summary::after { transform: rotate(90deg); }
+    .preview-warmup-text { font-size: 0.82rem; color: var(--text2); margin-top: 10px; line-height: 1.5; }
+    .preview-section-heading { font-size: 0.78rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin: 16px 0 8px; }
+    .preview-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }
+  `;
+  document.head.appendChild(s);
+})();
 
 function go(screen) {
   state.screen = screen;
@@ -171,6 +209,8 @@ function renderHome() {
           </button>`;
         }).join('')}
       </div>
+      <button class="btn btn-secondary lw-home-btn" id="load-workout-btn">Load Workout</button>
+
       ${lastSession ? `
       <div class="last-session-card">
         <p class="last-session-label">Last session</p>
@@ -185,6 +225,123 @@ function renderHome() {
     });
   });
   document.getElementById('stats-btn').addEventListener('click', () => go('stats'));
+  document.getElementById('load-workout-btn').addEventListener('click', showLoadWorkoutModal);
+}
+
+function showLoadWorkoutModal() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="bottom-sheet slideUp">
+      <div class="sheet-handle"></div>
+      <h3 class="sheet-title">Load Workout</h3>
+      <textarea class="lw-textarea" id="lw-json" placeholder='Paste workout JSON here…'></textarea>
+      <div class="lw-error" id="lw-error">Invalid JSON — check and try again</div>
+      <button class="btn btn-primary btn-lg" id="lw-preview">Preview</button>
+      <button class="btn btn-ghost" id="lw-cancel">Cancel</button>
+    </div>`;
+  app.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#lw-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  overlay.querySelector('#lw-preview').addEventListener('click', () => {
+    const raw = overlay.querySelector('#lw-json').value.trim();
+    const err = overlay.querySelector('#lw-error');
+    err.classList.remove('visible');
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      err.textContent = 'Invalid JSON — check and try again';
+      err.classList.add('visible');
+      return;
+    }
+    if (!parsed || typeof parsed !== 'object' || !parsed.id || !Array.isArray(parsed.exercises)) {
+      err.textContent = 'JSON parsed but is missing required fields (id, exercises[])';
+      err.classList.add('visible');
+      return;
+    }
+    pendingWorkout = parsed;
+    close();
+    go('preview');
+  });
+}
+
+// PREVIEW
+function renderPreview() {
+  const w = pendingWorkout;
+  if (!w) { go('home'); return; }
+
+  const exCard = (ex) => `
+    <button class="finisher-ex-btn" style="cursor: default;">
+      <div class="finisher-ex-info">
+        <span class="finisher-ex-name">${ex.name}</span>
+        <span class="finisher-ex-detail">${ex.sets} sets &middot; ${ex.repsMin === ex.repsMax ? ex.repsMin : `${ex.repsMin}–${ex.repsMax}`} reps &middot; ${ex.startWeight} kg &middot; ${ex.rest}s rest</span>
+      </div>
+    </button>`;
+
+  app.innerHTML = `
+    <div class="screen fadeUp">
+      <header class="sub-header">
+        <button class="icon-btn" id="back-btn" aria-label="Back">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <h1 class="sub-title">Preview</h1>
+        <div style="width:40px"></div>
+      </header>
+
+      <div class="preview-header">
+        <h2 class="preview-name">${w.name || w.id}</h2>
+        ${w.subtitle ? `<p class="preview-sub">${w.subtitle}${w.day ? ` &middot; ${w.day}` : ''}</p>` : ''}
+      </div>
+
+      ${w.warmup ? `
+      <details class="preview-warmup">
+        <summary>Warmup</summary>
+        <p class="preview-warmup-text">${w.warmup}</p>
+      </details>` : ''}
+
+      <p class="preview-section-heading">Main &middot; ${w.exercises.length} exercises</p>
+      <div class="finisher-exercise-list">
+        ${w.exercises.map(exCard).join('')}
+      </div>
+
+      ${w.finisher && w.finisher.exercises && w.finisher.exercises.length > 0 ? `
+        <p class="preview-section-heading">Optional Finisher${w.finisher.name ? ` &middot; ${w.finisher.name}` : ''}</p>
+        <div class="finisher-exercise-list">
+          ${w.finisher.exercises.map(exCard).join('')}
+        </div>
+      ` : ''}
+
+      <div class="preview-actions">
+        <button class="btn btn-primary btn-lg" id="confirm-load">Confirm — load workout</button>
+        <button class="btn btn-ghost" id="back-load">Back</button>
+      </div>
+    </div>`;
+
+  const backHome = () => { pendingWorkout = null; go('home'); };
+  document.getElementById('back-btn').addEventListener('click', backHome);
+  document.getElementById('back-load').addEventListener('click', backHome);
+
+  document.getElementById('confirm-load').addEventListener('click', async () => {
+    const btn = document.getElementById('confirm-load');
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+
+    // Fire-and-forget sheet write — never blocks the local load
+    sheets.saveWorkout(w);
+
+    // Insert into liveSessions with Today badge
+    const tagged = { ...w, fromSheet: true };
+    const idx = liveSessions.findIndex((s) => s.id === w.id);
+    if (idx >= 0) liveSessions[idx] = tagged;
+    else liveSessions.unshift(tagged);
+
+    pendingWorkout = null;
+    go('home');
+  });
 }
 
 // STATS — multi-section: overview, volume chart, PRs, per-exercise progression, history

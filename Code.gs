@@ -35,6 +35,7 @@ function doPost(e) {
     const body = JSON.parse(e.postData.contents);
     if (body.action === 'saveSession') return json(saveSession(body.data));
     if (body.action === 'saveWeight') return json(saveWeight(body.exerciseId, body.weight));
+    if (body.action === 'saveWorkout') return json(saveWorkout(body.data));
     if (body.action === 'clearAll') return json(clearAll());
     return json({ error: 'unknown action: ' + body.action });
   } catch (err) {
@@ -114,6 +115,13 @@ function saveSession(data) {
     totalVolume,
     JSON.stringify(data.exercises)
   ]);
+  return { ok: true };
+}
+
+function saveWorkout(data) {
+  const sheet = ss().getSheetByName('workouts');
+  if (!sheet) throw new Error('no `workouts` tab');
+  sheet.getRange('A2').setValue(data);
   return { ok: true };
 }
 
