@@ -376,9 +376,26 @@ function paintStats(history) {
         </div>`;
       }).join('')}
     </div>`}
+
+    <div class="danger-zone">
+      <button class="btn btn-danger" id="reset-all-btn">Reset everything</button>
+      <p class="danger-note">Wipes the Sheet (history + weights) and this device's local cache. Cannot be undone.</p>
+    </div>
   `);
 
   document.getElementById('back-btn').addEventListener('click', () => go('home'));
+
+  document.getElementById('reset-all-btn').addEventListener('click', async () => {
+    if (!confirm('Wipe ALL session history and weights, both on the Sheet and this device? This cannot be undone.')) return;
+    const btn = document.getElementById('reset-all-btn');
+    btn.disabled = true;
+    btn.textContent = 'Clearing…';
+    const ok = await sheets.clearAll();
+    store.clearAll();
+    statsState = { selectedExerciseId: null, expandedSessions: new Set(), source: 'local' };
+    if (!ok) alert('Sheet clear failed (local cleared). Re-deploy Code.gs to enable remote reset.');
+    renderStats();
+  });
 
   const progSelect = document.getElementById('prog-select');
   if (progSelect) {

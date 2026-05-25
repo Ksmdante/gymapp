@@ -73,6 +73,10 @@ export async function saveWeight(exerciseId, weight) {
   return await post({ action: 'saveWeight', exerciseId, weight });
 }
 
+export async function clearAll() {
+  return await post({ action: 'clearAll' });
+}
+
 export function isConfigured() {
   return !!SHEETS_URL;
 }

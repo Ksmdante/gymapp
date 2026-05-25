@@ -71,6 +71,10 @@ h1, h2, h3, .stat-num, .target-value, .rest-countdown, .complete-stat-num, .stat
 .btn-primary { background: var(--accent); color: #0c0c0e; }
 .btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
 .btn-ghost { background: transparent; color: var(--text2); }
+.btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+.btn-danger:disabled { opacity: 0.5; cursor: wait; }
+.danger-zone { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border); }
+.danger-note { font-size: 0.7rem; color: var(--text3); text-align: center; margin-top: 8px; }
 .btn-lg { font-size: 1.1rem; padding: 16px 24px; }
 
 .icon-btn {

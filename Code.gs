@@ -35,6 +35,7 @@ function doPost(e) {
     const body = JSON.parse(e.postData.contents);
     if (body.action === 'saveSession') return json(saveSession(body.data));
     if (body.action === 'saveWeight') return json(saveWeight(body.exerciseId, body.weight));
+    if (body.action === 'clearAll') return json(clearAll());
     return json({ error: 'unknown action: ' + body.action });
   } catch (err) {
     return json({ error: String(err) });
@@ -114,6 +115,19 @@ function saveSession(data) {
     JSON.stringify(data.exercises)
   ]);
   return { ok: true };
+}
+
+function clearAll() {
+  const book = ss();
+  for (const tabName of ['history', 'weights']) {
+    const sheet = book.getSheetByName(tabName);
+    if (!sheet) continue;
+    const last = sheet.getLastRow();
+    if (last >= 2) {
+      sheet.getRange(2, 1, last - 1, sheet.getLastColumn()).clearContent();
+    }
+  }
+  return { ok: true, cleared: ['history', 'weights'] };
 }
 
 function saveWeight(exerciseId, weight) {
