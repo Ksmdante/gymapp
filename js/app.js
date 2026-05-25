@@ -187,24 +187,11 @@ function renderHome() {
   document.getElementById('stats-btn').addEventListener('click', () => go('stats'));
 }
 
-// STATS
-function renderStats() {
-  const history = store.getHistory();
-  const total = history.length;
-  const thisWeek = history.filter((s) => {
-    const d = new Date(s.date);
-    return d >= new Date(Date.now() - 7 * 86400000);
-  }).length;
-  const pushCount = store.getSessionsForType('push').length;
-  const pullCount = store.getSessionsForType('pull').length;
-  const legsCount = store.getSessionsForType('legs').length;
-  const totalKg = history.reduce((sum, s) =>
-    sum + s.exercises.reduce((esum, ex) =>
-      esum + ex.sets.reduce((ssum, set) => ssum + (set.weight * set.reps), 0), 0), 0);
-  const weights = store.getAllWeights();
-  const allExercises = sessions.flatMap((s) => [...s.exercises, ...(s.finisher ? s.finisher.exercises : [])]);
+// STATS — multi-section: overview, volume chart, PRs, per-exercise progression, history
+let statsState = { selectedExerciseId: null, expandedSessions: new Set(), source: 'local' };
 
-  app.innerHTML = `
+function shellStats(body) {
+  return `
     <div class="screen fadeUp">
       <header class="sub-header">
         <button class="icon-btn" id="back-btn" aria-label="Back">
@@ -213,26 +200,249 @@ function renderStats() {
         <h1 class="sub-title">Stats</h1>
         <div style="width:40px"></div>
       </header>
-      <div class="stats-grid">
-        <div class="stats-tile"><span class="stats-tile-num">${total}</span><span class="stats-tile-label">Total Sessions</span></div>
-        <div class="stats-tile"><span class="stats-tile-num">${thisWeek}</span><span class="stats-tile-label">This Week</span></div>
-        <div class="stats-tile"><span class="stats-tile-num">${pushCount}</span><span class="stats-tile-label">Push</span></div>
-        <div class="stats-tile"><span class="stats-tile-num">${pullCount}</span><span class="stats-tile-label">Pull</span></div>
-        <div class="stats-tile"><span class="stats-tile-num">${legsCount}</span><span class="stats-tile-label">Legs</span></div>
-        <div class="stats-tile"><span class="stats-tile-num">${Math.round(totalKg).toLocaleString()}</span><span class="stats-tile-label">Total kg</span></div>
-      </div>
-      <h2 class="section-heading">Current Weights</h2>
-      <div class="weights-list">
-        ${allExercises.map((ex) => `
-          <div class="weight-row">
-            <span class="weight-row-name">${ex.name}</span>
-            <span class="weight-row-val">${weights[ex.id] ?? ex.startWeight} kg</span>
-          </div>
-        `).join('')}
-      </div>
-      <p class="coming-soon">Charts and history coming in the next version</p>
+      ${body}
     </div>`;
+}
+
+async function renderStats() {
+  // Show loading shell first
+  app.innerHTML = shellStats(`<p class="coming-soon">Loading…</p>`);
   document.getElementById('back-btn').addEventListener('click', () => go('home'));
+
+  // Fetch sheet history, fall back to local on failure
+  let history = null;
+  if (sheets.isConfigured()) history = await sheets.fetchHistory();
+  if (Array.isArray(history)) {
+    statsState.source = 'sheet';
+  } else {
+    history = store.getHistory();
+    statsState.source = 'local';
+  }
+
+  // Bail if user navigated away while fetching
+  if (state.screen !== 'stats') return;
+
+  paintStats(history);
+}
+
+function paintStats(history) {
+  const allExercises = sessions.flatMap((s) => [...s.exercises, ...(s.finisher ? s.finisher.exercises : [])]);
+  const exerciseMeta = {};
+  for (const ex of allExercises) exerciseMeta[ex.id] = ex;
+
+  // Top-line stats
+  const total = history.length;
+  const thisWeek = history.filter((s) => new Date(s.date) >= new Date(Date.now() - 7 * 86400000)).length;
+  const pushCount = history.filter((s) => s.sessionType === 'push').length;
+  const pullCount = history.filter((s) => s.sessionType === 'pull').length;
+  const legsCount = history.filter((s) => s.sessionType === 'legs').length;
+  const totalKg = history.reduce((sum, s) =>
+    sum + (s.totalVolume ?? s.exercises.reduce((e2, ex) =>
+      e2 + (ex.sets || []).reduce((s2, set) => s2 + set.weight * set.reps, 0), 0)), 0);
+
+  // Personal records: heaviest single set per exercise
+  const prs = {};
+  for (const s of history) {
+    for (const ex of s.exercises) {
+      for (const set of (ex.sets || [])) {
+        const w = set.weight || 0;
+        if (!prs[ex.id] || w > prs[ex.id].weight) {
+          prs[ex.id] = { name: ex.name, weight: w, reps: set.reps, date: s.date };
+        }
+      }
+    }
+  }
+  const prList = Object.entries(prs)
+    .map(([id, p]) => ({ id, ...p }))
+    .sort((a, b) => b.weight - a.weight);
+
+  // Weekly volume — last 8 weeks
+  const weeks = [];
+  const now = new Date();
+  const startOfWeek = (d) => {
+    const dt = new Date(d);
+    const day = dt.getDay() || 7;
+    dt.setHours(0, 0, 0, 0);
+    dt.setDate(dt.getDate() - (day - 1));
+    return dt;
+  };
+  const thisMonday = startOfWeek(now);
+  for (let i = 7; i >= 0; i--) {
+    const weekStart = new Date(thisMonday);
+    weekStart.setDate(weekStart.getDate() - i * 7);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate() + 7);
+    const vol = history
+      .filter((s) => { const d = new Date(s.date); return d >= weekStart && d < weekEnd; })
+      .reduce((a, s) => a + (s.totalVolume ?? s.exercises.reduce((e2, ex) =>
+        e2 + (ex.sets || []).reduce((s2, set) => s2 + set.weight * set.reps, 0), 0)), 0);
+    weeks.push({ label: `${weekStart.getDate()}/${weekStart.getMonth() + 1}`, volume: Math.round(vol) });
+  }
+
+  // Per-exercise progression
+  const exerciseIdsInHistory = [...new Set(history.flatMap((s) => s.exercises.map((e) => e.id)))];
+  if (!statsState.selectedExerciseId && exerciseIdsInHistory.length > 0) {
+    statsState.selectedExerciseId = exerciseIdsInHistory[0];
+  }
+  const progSel = statsState.selectedExerciseId;
+  const progPoints = [];
+  if (progSel) {
+    for (const s of history) {
+      const ex = s.exercises.find((e) => e.id === progSel);
+      if (ex && ex.sets && ex.sets.length > 0) {
+        progPoints.push({ date: new Date(s.date), weight: ex.sets[0].weight });
+      }
+    }
+    progPoints.sort((a, b) => a.date - b.date);
+  }
+
+  // History list — newest first
+  const sortedHistory = [...history].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  app.innerHTML = shellStats(`
+    <div class="stats-source-pill ${statsState.source === 'sheet' ? 'pill-info' : 'pill-warn'}">
+      ${statsState.source === 'sheet' ? 'Live from Google Sheet' : 'Local only — sheet unreachable'}
+    </div>
+
+    <div class="stats-grid">
+      <div class="stats-tile"><span class="stats-tile-num">${total}</span><span class="stats-tile-label">Total Sessions</span></div>
+      <div class="stats-tile"><span class="stats-tile-num">${thisWeek}</span><span class="stats-tile-label">This Week</span></div>
+      <div class="stats-tile"><span class="stats-tile-num">${pushCount}</span><span class="stats-tile-label">Push</span></div>
+      <div class="stats-tile"><span class="stats-tile-num">${pullCount}</span><span class="stats-tile-label">Pull</span></div>
+      <div class="stats-tile"><span class="stats-tile-num">${legsCount}</span><span class="stats-tile-label">Legs</span></div>
+      <div class="stats-tile"><span class="stats-tile-num">${Math.round(totalKg).toLocaleString()}</span><span class="stats-tile-label">Total kg</span></div>
+    </div>
+
+    <h2 class="section-heading">Weekly Volume (last 8 weeks)</h2>
+    ${renderVolumeChart(weeks)}
+
+    <h2 class="section-heading">Personal Records</h2>
+    ${prList.length === 0 ? '<p class="empty-note">No PRs yet — finish a session to start tracking.</p>' : `
+    <div class="pr-list">
+      ${prList.slice(0, 10).map((pr) => `
+        <div class="pr-row">
+          <div class="pr-info">
+            <span class="pr-name">${pr.name}</span>
+            <span class="pr-detail">${pr.reps} reps · ${new Date(pr.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}</span>
+          </div>
+          <span class="pr-weight">${pr.weight} kg</span>
+        </div>
+      `).join('')}
+    </div>`}
+
+    <h2 class="section-heading">Exercise Progression</h2>
+    ${exerciseIdsInHistory.length === 0 ? '<p class="empty-note">No exercises logged yet.</p>' : `
+    <select id="prog-select" class="prog-select">
+      ${exerciseIdsInHistory.map((id) => {
+        const name = (exerciseMeta[id] && exerciseMeta[id].name) || id;
+        return `<option value="${id}" ${id === progSel ? 'selected' : ''}>${name}</option>`;
+      }).join('')}
+    </select>
+    ${renderProgressionChart(progPoints)}`}
+
+    <h2 class="section-heading">Session History</h2>
+    ${sortedHistory.length === 0 ? '<p class="empty-note">No sessions yet.</p>' : `
+    <div class="history-list">
+      ${sortedHistory.map((s) => {
+        const isOpen = statsState.expandedSessions.has(s.id);
+        const vol = Math.round(s.totalVolume ?? s.exercises.reduce((a, ex) =>
+          a + (ex.sets || []).reduce((s2, set) => s2 + set.weight * set.reps, 0), 0));
+        const sets = s.totalSets ?? s.exercises.reduce((a, ex) => a + (ex.sets || []).length, 0);
+        const dateStr = new Date(s.date).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+        return `
+        <div class="history-card">
+          <button class="history-row" data-id="${s.id}">
+            <div class="history-row-left">
+              <span class="history-type">${s.sessionType.charAt(0).toUpperCase() + s.sessionType.slice(1)}</span>
+              <span class="history-date">${dateStr}</span>
+            </div>
+            <div class="history-row-right">
+              <span class="history-meta">${sets} sets · ${vol.toLocaleString()} kg · ${s.duration || '—'}</span>
+              <span class="history-caret ${isOpen ? 'open' : ''}">›</span>
+            </div>
+          </button>
+          ${isOpen ? `
+          <div class="history-detail">
+            ${s.exercises.map((ex) => `
+              <div class="history-exercise">
+                <div class="history-ex-name">${ex.name}${ex.skipped ? ' <span class="history-skip">skipped</span>' : ''}</div>
+                ${(ex.sets || []).length > 0 ? `
+                <div class="history-sets">
+                  ${ex.sets.map((set, i) => `<span class="history-set-pill">${set.weight}kg × ${set.reps}</span>`).join('')}
+                </div>` : ''}
+              </div>
+            `).join('')}
+          </div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>`}
+  `);
+
+  document.getElementById('back-btn').addEventListener('click', () => go('home'));
+
+  const progSelect = document.getElementById('prog-select');
+  if (progSelect) {
+    progSelect.addEventListener('change', (e) => {
+      statsState.selectedExerciseId = e.target.value;
+      paintStats(history);
+    });
+  }
+
+  app.querySelectorAll('.history-row').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      if (statsState.expandedSessions.has(id)) statsState.expandedSessions.delete(id);
+      else statsState.expandedSessions.add(id);
+      paintStats(history);
+    });
+  });
+}
+
+function renderVolumeChart(weeks) {
+  const w = 320, h = 140, pad = 24;
+  const max = Math.max(1, ...weeks.map((wk) => wk.volume));
+  const barW = (w - pad * 2) / weeks.length - 4;
+  const bars = weeks.map((wk, i) => {
+    const x = pad + i * ((w - pad * 2) / weeks.length);
+    const barH = (wk.volume / max) * (h - pad - 16);
+    const y = h - pad - barH;
+    return `
+      <rect x="${x}" y="${y}" width="${barW}" height="${barH}" fill="var(--accent)" rx="2"/>
+      <text x="${x + barW / 2}" y="${h - 6}" text-anchor="middle" font-size="9" fill="var(--text3)" font-family="DM Sans">${wk.label}</text>
+    `;
+  }).join('');
+  return `<svg class="chart-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${bars}</svg>`;
+}
+
+function renderProgressionChart(points) {
+  if (points.length === 0) return '<p class="empty-note">No data for this exercise yet.</p>';
+  const w = 320, h = 160, pad = 28;
+  const weights = points.map((p) => p.weight);
+  const minW = Math.min(...weights);
+  const maxW = Math.max(...weights);
+  const range = maxW - minW || 1;
+  const xStep = points.length > 1 ? (w - pad * 2) / (points.length - 1) : 0;
+
+  const coords = points.map((p, i) => {
+    const x = pad + i * xStep;
+    const y = h - pad - ((p.weight - minW) / range) * (h - pad * 2);
+    return [x, y, p.weight];
+  });
+
+  const path = coords.map(([x, y], i) => (i === 0 ? `M${x} ${y}` : `L${x} ${y}`)).join(' ');
+  const dots = coords.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="3" fill="var(--accent)"/>`).join('');
+
+  // Y-axis labels
+  const yLabels = `
+    <text x="4" y="${pad + 4}" font-size="9" fill="var(--text3)" font-family="DM Sans">${maxW}kg</text>
+    <text x="4" y="${h - pad + 4}" font-size="9" fill="var(--text3)" font-family="DM Sans">${minW}kg</text>
+  `;
+
+  return `<svg class="chart-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    ${yLabels}
+    <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    ${dots}
+  </svg>`;
 }
 
 // FINISHER PICKER — shown after main exercises complete, lets user pick individual exercises

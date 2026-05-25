@@ -23,6 +23,7 @@ function doGet(e) {
     const action = e.parameter.action;
     if (action === 'getWorkout') return json(getWorkout());
     if (action === 'getWeights') return json(getWeights());
+    if (action === 'getHistory') return json(getHistory());
     return json({ error: 'unknown action: ' + action });
   } catch (err) {
     return json({ error: String(err) });
@@ -60,6 +61,27 @@ function getWorkout() {
   } catch (err) {
     return { error: 'workout JSON in A2 is invalid: ' + err };
   }
+}
+
+function getHistory() {
+  const sheet = ss().getSheetByName('history');
+  if (!sheet) return [];
+  const last = sheet.getLastRow();
+  if (last < 2) return [];
+  const rows = sheet.getRange(2, 1, last - 1, 7).getValues();
+  return rows.map((r) => {
+    let exercises = [];
+    try { exercises = JSON.parse(r[6]); } catch (e) { exercises = []; }
+    return {
+      id: String(r[0]),
+      sessionType: String(r[1]),
+      date: r[2] instanceof Date ? r[2].toISOString() : String(r[2]),
+      duration: String(r[3]),
+      totalSets: Number(r[4]) || 0,
+      totalVolume: Number(r[5]) || 0,
+      exercises: exercises
+    };
+  });
 }
 
 function getWeights() {

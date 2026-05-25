@@ -61,6 +61,10 @@ export async function fetchWeights() {
   return await get('getWeights');
 }
 
+export async function fetchHistory() {
+  return await get('getHistory');
+}
+
 export async function saveSession(data) {
   return await post({ action: 'saveSession', data });
 }
