@@ -81,6 +81,10 @@ export async function saveWorkout(sessionJson) {
   return await post({ action: 'saveWorkout', data: JSON.stringify(sessionJson) });
 }
 
+export async function updateSession(session) {
+  return await post({ action: 'updateSession', data: session });
+}
+
 export function isConfigured() {
   return !!SHEETS_URL;
 }

@@ -70,6 +70,59 @@ function render() {
     .preview-warmup-text { font-size: 0.82rem; color: var(--text2); margin-top: 10px; line-height: 1.5; }
     .preview-section-heading { font-size: 0.78rem; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin: 16px 0 8px; }
     .preview-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }
+
+    .exercise-counter-btn {
+      display: flex; flex-direction: column; align-items: center; gap: 1px;
+      background: transparent; border: none; color: var(--text); cursor: pointer; padding: 4px 8px;
+      border-radius: var(--radius-sm);
+    }
+    .exercise-counter-btn:active { background: var(--bg3); }
+    .exercise-counter-caret { font-size: 0.7rem; color: var(--text3); margin-top: -4px; }
+
+    .rest-banner {
+      display: flex; align-items: center; gap: 10px; width: 100%;
+      background: rgba(74, 156, 240, 0.12); border: 1px solid var(--info);
+      color: var(--info); padding: 8px 14px; border-radius: var(--radius-sm);
+      margin-bottom: 14px; cursor: pointer; font-size: 0.85rem;
+    }
+    .rest-banner-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--info);
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .rest-banner-label { font-weight: 500; }
+    .rest-banner-time { margin-left: auto; font-family: 'Barlow Condensed', sans-serif; font-size: 1rem; font-weight: 600; }
+    .rest-banner-caret { font-size: 0.9rem; opacity: 0.7; }
+
+    .jump-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; max-height: 60vh; overflow-y: auto; }
+    .jump-row {
+      display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+      background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 10px 12px; cursor: pointer; color: var(--text);
+    }
+    .jump-row:active { border-color: var(--accent); }
+    .jump-num {
+      width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+      background: var(--bg3); border-radius: 50%; font-size: 0.78rem; color: var(--text3);
+      flex-shrink: 0; font-family: 'Barlow Condensed', sans-serif;
+    }
+    .jump-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+    .jump-name { font-size: 0.88rem; font-weight: 500; }
+    .jump-detail { font-size: 0.72rem; color: var(--text3); }
+    .jump-check { color: var(--accent); font-size: 1rem; }
+    .jump-current-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+    .jump-current { border-color: var(--accent); }
+    .jump-current .jump-num { background: var(--accent); color: #0c0c0e; }
+    .jump-done { opacity: 0.6; }
+    .jump-done .jump-num { background: var(--accent); color: #0c0c0e; }
+    .jump-skipped { opacity: 0.45; }
+
+    .history-set-edit {
+      cursor: pointer; border: 1px solid var(--border); transition: border-color 0.15s;
+    }
+    .history-set-edit:active { border-color: var(--accent); }
+    .history-edit-hint { font-size: 0.7rem; color: var(--text3); text-align: center; margin-top: 8px; font-style: italic; }
+    .edit-set-context { font-size: 0.8rem; color: var(--text2); text-align: center; margin-bottom: 16px; margin-top: -8px; }
   `;
   document.head.appendChild(s);
 })();
@@ -527,15 +580,16 @@ function paintStats(history) {
           </button>
           ${isOpen ? `
           <div class="history-detail">
-            ${s.exercises.map((ex) => `
+            ${s.exercises.map((ex, exIdx) => `
               <div class="history-exercise">
                 <div class="history-ex-name">${ex.name}${ex.skipped ? ' <span class="history-skip">skipped</span>' : ''}</div>
                 ${(ex.sets || []).length > 0 ? `
                 <div class="history-sets">
-                  ${ex.sets.map((set, i) => `<span class="history-set-pill">${set.weight}kg × ${set.reps}</span>`).join('')}
+                  ${ex.sets.map((set, setIdx) => `<button class="history-set-pill history-set-edit" data-session="${s.id}" data-ex="${exIdx}" data-set="${setIdx}">${set.weight}kg × ${set.reps}</button>`).join('')}
                 </div>` : ''}
               </div>
             `).join('')}
+            <p class="history-edit-hint">Tap any set to edit weight or reps</p>
           </div>` : ''}
         </div>`;
       }).join('')}
@@ -576,6 +630,92 @@ function paintStats(history) {
       else statsState.expandedSessions.add(id);
       paintStats(history);
     });
+  });
+
+  app.querySelectorAll('.history-set-edit').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sessionId = btn.dataset.session;
+      const exIdx = parseInt(btn.dataset.ex);
+      const setIdx = parseInt(btn.dataset.set);
+      const session = history.find((s) => s.id === sessionId);
+      if (!session) return;
+      showEditSetModal(session, exIdx, setIdx, history);
+    });
+  });
+}
+
+function showEditSetModal(session, exIdx, setIdx, history) {
+  const ex = session.exercises[exIdx];
+  const set = ex.sets[setIdx];
+  let w = set.weight;
+  let r = set.reps;
+  const wStep = ex.progressionKg || 2.5;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="bottom-sheet slideUp">
+      <div class="sheet-handle"></div>
+      <h3 class="sheet-title">Edit Set</h3>
+      <p class="edit-set-context">${ex.name} · Set ${setIdx + 1}</p>
+      <div class="adjust-fields">
+        <div class="adjust-field">
+          <span class="adjust-label">Weight (kg)</span>
+          <div class="adjust-controls">
+            <button class="adj-btn" id="es-w-minus">−</button>
+            <span class="adjust-val" id="es-w-val">${w}</span>
+            <button class="adj-btn" id="es-w-plus">+</button>
+          </div>
+        </div>
+        <div class="adjust-field">
+          <span class="adjust-label">Reps</span>
+          <div class="adjust-controls">
+            <button class="adj-btn" id="es-r-minus">−</button>
+            <span class="adjust-val" id="es-r-val">${r}</span>
+            <button class="adj-btn" id="es-r-plus">+</button>
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-lg" id="es-save">Save</button>
+      <button class="btn btn-ghost" id="es-cancel">Cancel</button>
+    </div>`;
+  app.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#es-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  overlay.querySelector('#es-w-minus').addEventListener('click', () => {
+    w = Math.max(0, w - wStep);
+    overlay.querySelector('#es-w-val').textContent = w;
+  });
+  overlay.querySelector('#es-w-plus').addEventListener('click', () => {
+    w += wStep;
+    overlay.querySelector('#es-w-val').textContent = w;
+  });
+  overlay.querySelector('#es-r-minus').addEventListener('click', () => {
+    r = Math.max(0, r - 1);
+    overlay.querySelector('#es-r-val').textContent = r;
+  });
+  overlay.querySelector('#es-r-plus').addEventListener('click', () => {
+    r += 1;
+    overlay.querySelector('#es-r-val').textContent = r;
+  });
+
+  overlay.querySelector('#es-save').addEventListener('click', async () => {
+    const saveBtn = overlay.querySelector('#es-save');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    session.exercises[exIdx].sets[setIdx] = { ...set, weight: w, reps: r };
+    const ok = await sheets.updateSession(session);
+    if (!ok) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+      alert('Could not save to Sheet (re-deploy Code.gs if you haven\'t). Edit was kept locally for this view only.');
+    }
+    close();
+    paintStats(history);
   });
 }
 
@@ -714,6 +854,8 @@ function renderExercise() {
   const totalEx = activeExercises.length;
   const progress = ((exerciseIndex) / totalEx) * 100;
 
+  const restActive = restRemaining > 0 && restTimer !== null;
+
   app.innerHTML = `
     <div class="screen fadeUp exercise-screen">
       <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${progress}%"></div></div>
@@ -721,12 +863,21 @@ function renderExercise() {
         <button class="icon-btn" id="quit-btn" aria-label="Quit">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
         </button>
-        <div class="exercise-header-center">
+        <button class="exercise-counter-btn" id="jump-btn">
           <span class="exercise-counter">${exerciseIndex + 1} / ${totalEx}</span>
+          <span class="exercise-counter-caret">›</span>
           <span class="exercise-timer" id="session-timer">${elapsed()}</span>
-        </div>
+        </button>
         <button class="icon-btn text-btn" id="skip-btn">Skip</button>
       </header>
+
+      ${restActive ? `
+      <button class="rest-banner" id="rest-banner">
+        <span class="rest-banner-dot"></span>
+        <span class="rest-banner-label">Resting</span>
+        <span class="rest-banner-time" id="rest-banner-time">${formatRest(restRemaining)}</span>
+        <span class="rest-banner-caret">↗</span>
+      </button>` : ''}
 
       <h2 class="exercise-name">${ex.name}</h2>
       <p class="exercise-note">${ex.note}</p>
@@ -799,8 +950,72 @@ function renderExercise() {
   document.getElementById('quit-btn').addEventListener('click', () => {
     if (confirm('Quit this session? Progress will be lost.')) {
       stopSessionTimer();
+      if (restTimer) { clearInterval(restTimer); restTimer = null; }
+      restRemaining = 0;
       go('home');
     }
+  });
+
+  document.getElementById('jump-btn').addEventListener('click', showJumpSheet);
+
+  const banner = document.getElementById('rest-banner');
+  if (banner) banner.addEventListener('click', () => go('rest'));
+}
+
+function showJumpSheet() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="bottom-sheet slideUp">
+      <div class="sheet-handle"></div>
+      <h3 class="sheet-title">Jump to Exercise</h3>
+      <div class="jump-list">
+        ${activeExercises.map((ex, i) => {
+          const log = sessionLog[i];
+          const done = log && log.sets.length >= ex.sets;
+          const inProgress = log && log.sets.length > 0 && !done;
+          const skipped = log && log.skipped;
+          const isCurrent = i === exerciseIndex;
+          let status = 'upcoming';
+          if (skipped) status = 'skipped';
+          else if (done) status = 'done';
+          else if (isCurrent) status = 'current';
+          else if (inProgress) status = 'partial';
+          const statusLabel = {
+            current: 'Current',
+            done: 'Complete',
+            partial: `${log.sets.length}/${ex.sets}`,
+            skipped: 'Skipped',
+            upcoming: `${ex.sets} sets`
+          }[status];
+          return `
+          <button class="jump-row jump-${status}" data-idx="${i}">
+            <span class="jump-num">${i + 1}</span>
+            <div class="jump-info">
+              <span class="jump-name">${ex.name}</span>
+              <span class="jump-detail">${ex.repsMin === ex.repsMax ? ex.repsMin : `${ex.repsMin}–${ex.repsMax}`} reps · ${statusLabel}</span>
+            </div>
+            ${status === 'done' ? '<span class="jump-check">✓</span>' : ''}
+            ${status === 'current' ? '<span class="jump-current-dot"></span>' : ''}
+          </button>`;
+        }).join('')}
+      </div>
+      <button class="btn btn-ghost" id="jump-cancel">Close</button>
+    </div>`;
+  app.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.querySelector('#jump-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  overlay.querySelectorAll('.jump-row').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const i = parseInt(btn.dataset.idx);
+      exerciseIndex = i;
+      setIndex = Math.min(sessionLog[i].sets.length, activeExercises[i].sets);
+      close();
+      go('exercise');
+    });
   });
 }
 
@@ -843,33 +1058,45 @@ function startRest(seconds, advanceAfter) {
   restRemaining = seconds;
   restAdvanceAfter = advanceAfter;
   go('rest');
+  ensureRestInterval();
+}
 
-  if (restTimer) clearInterval(restTimer);
+// Single shared interval that ticks regardless of which screen we're on.
+// Only auto-advances when actually on the rest screen.
+function ensureRestInterval() {
+  if (restTimer) return;
   restTimer = setInterval(() => {
     restRemaining--;
     updateRestDisplay();
     if (restRemaining <= 0) {
       clearInterval(restTimer);
       restTimer = null;
-      if (restAdvanceAfter) advanceExercise();
-      else go('exercise');
+      if (state.screen === 'rest') {
+        if (restAdvanceAfter) advanceExercise();
+        else go('exercise');
+      }
+      // If not on rest screen, just stop quietly. Banner disappears on next render.
     }
   }, 1000);
 }
 
+function formatRest(secs) {
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return m > 0 ? `${m}:${s.toString().padStart(2, '0')}` : `${s}`;
+}
+
 function updateRestDisplay() {
   const el = document.getElementById('rest-countdown');
-  if (el) {
-    const m = Math.floor(restRemaining / 60);
-    const s = restRemaining % 60;
-    el.textContent = m > 0 ? `${m}:${s.toString().padStart(2, '0')}` : `${s}`;
-  }
+  if (el) el.textContent = formatRest(restRemaining);
   const ring = document.getElementById('rest-ring');
   if (ring) {
     const frac = restRemaining / restDuration;
     const circ = 2 * Math.PI * 54;
     ring.style.strokeDashoffset = circ * (1 - frac);
   }
+  const banner = document.getElementById('rest-banner-time');
+  if (banner) banner.textContent = formatRest(restRemaining);
 }
 
 function showAdjustModal(weight, ex) {
@@ -959,19 +1186,20 @@ function renderRest() {
     </div>`;
 
   document.getElementById('back-to-exercise').addEventListener('click', () => {
-    clearInterval(restTimer);
-    restTimer = null;
-    if (restAdvanceAfter) {
+    // Timer keeps ticking in background. If this rest is "after last set",
+    // we still navigate to the current (just-finished) exercise — banner shows progress.
+    if (restAdvanceAfter && exerciseIndex + 1 < activeExercises.length) {
+      // Advance to the next exercise so the user sees what's coming up
       exerciseIndex++;
       setIndex = 0;
     }
-    exerciseIndex = Math.max(0, exerciseIndex - (restAdvanceAfter ? 1 : 0));
     go('exercise');
   });
 
   document.getElementById('skip-rest').addEventListener('click', () => {
     clearInterval(restTimer);
     restTimer = null;
+    restRemaining = 0;
     if (restAdvanceAfter) advanceExercise();
     else go('exercise');
   });

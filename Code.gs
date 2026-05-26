@@ -34,6 +34,7 @@ function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents);
     if (body.action === 'saveSession') return json(saveSession(body.data));
+    if (body.action === 'updateSession') return json(updateSession(body.data));
     if (body.action === 'saveWeight') return json(saveWeight(body.exerciseId, body.weight));
     if (body.action === 'saveWorkout') return json(saveWorkout(body.data));
     if (body.action === 'clearAll') return json(clearAll());
@@ -115,6 +116,30 @@ function saveSession(data) {
     totalVolume,
     JSON.stringify(data.exercises)
   ]);
+  return { ok: true };
+}
+
+function updateSession(data) {
+  const sheet = ss().getSheetByName('history');
+  if (!sheet) throw new Error('no `history` tab');
+  const last = sheet.getLastRow();
+  if (last < 2) return { error: 'no rows' };
+  const ids = sheet.getRange(2, 1, last - 1, 1).getValues().flat().map(String);
+  const idx = ids.indexOf(String(data.id));
+  if (idx < 0) return { error: 'id not found: ' + data.id };
+  const totalSets = data.exercises.reduce(
+    (a, e) => a + (e.sets ? e.sets.length : 0), 0);
+  const totalVolume = data.exercises.reduce((a, e) =>
+    a + (e.sets || []).reduce((s, set) => s + (set.weight || 0) * (set.reps || 0), 0), 0);
+  sheet.getRange(idx + 2, 1, 1, 7).setValues([[
+    data.id,
+    data.sessionType,
+    data.date,
+    data.duration,
+    totalSets,
+    totalVolume,
+    JSON.stringify(data.exercises)
+  ]]);
   return { ok: true };
 }
 
